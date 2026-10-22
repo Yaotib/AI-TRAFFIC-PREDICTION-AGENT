@@ -1,4 +1,4 @@
-# [DepartWise] — The Agent That Explains Why
+# DepartWise — The Agent That Explains Why
 
 > An AI agent that tells Accra commuters **when to leave**, and shows exactly **why**, using real, traceable data.
 

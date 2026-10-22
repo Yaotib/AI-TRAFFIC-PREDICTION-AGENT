@@ -179,9 +179,9 @@ cd frontend && npx playwright test
 
 | Name | Role |
 |---|---|
-| [Cassandra Adoley Ankamah, David Okyere Adarkwah] | [Frontend] |
-| [Caleb Baffoe, Calvin Duah] | [Backend] |
-| [Jeffery Kwasi Anyimah, Yaw Oti Boachie] | [AI] |
+| Cassandra Adoley Ankamah, David Okyere Adarkwah | Frontend |
+| Caleb Baffoe, Calvin Duah | Backend |
+| Jeffery Kwasi Anyimah, Yaw Oti Boachie | AI |
 
 ## Acknowledgements
 

@@ -3,8 +3,7 @@
 > An AI agent that tells Accra commuters **when to leave**, and shows exactly **why**, using real, traceable data.
 
 **Hackathon track:** The Agent That Can Explain Why
-**Status:** MVP, built for [Hackathon Name] 2026
-**Team:** [Names and roles]
+**Status:** MVP, built for GEN-AI HACKATHON 2026
 **Demo:** [Link] · **Video:** [Link]
 
 ---

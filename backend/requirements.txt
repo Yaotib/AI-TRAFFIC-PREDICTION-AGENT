@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+openai
+python-dotenv
+slowapi
+tzdata
+pytest
+pytest-asyncio
+respx
+ruff

@@ -2,11 +2,12 @@ from datetime import datetime
 
 from app.engine.decision import (
     build_candidate,
+    build_warnings,
     preferred_slots,
     recommend_for_deadline,
     recommend_for_preferred,
 )
-from app.schemas import RouteOption
+from app.schemas import RouteOption, WarningCode
 from app.timeutil import ACCRA_TZ
 
 DEADLINE = datetime(2026, 10, 25, 9, 0, tzinfo=ACCRA_TZ)
@@ -78,3 +79,27 @@ def test_preferred_saving_of_exactly_five_counts():
     choice = recommend_for_preferred(make_candidates(table), PREFERRED)
     assert choice.minutes_saved == 5
     assert choice.shift is True
+
+
+
+
+def test_warns_when_times_barely_vary():
+    cands = make_candidates({"7:00": 30, "7:15": 31, "7:30": 32})
+    codes = [w.code for w in build_warnings(cands, 3, 0, False)]
+    assert codes == [WarningCode.LOW_VARIATION]
+
+
+def test_no_variation_warning_at_exactly_three_minutes():
+    cands = make_candidates({"7:00": 30, "7:15": 33})
+    assert build_warnings(cands, 2, 0, False) == []
+
+
+def test_warns_on_failed_slots_and_simulated_data():
+    cands = make_candidates({"7:00": 30, "7:15": 45})
+    codes = [w.code for w in build_warnings(cands, 4, 2, True)]
+    assert codes == [WarningCode.SLOTS_FAILED, WarningCode.SIMULATED_DATA]
+
+
+def test_clean_data_has_no_warnings():
+    cands = make_candidates({"7:00": 30, "7:15": 45})
+    assert build_warnings(cands, 2, 0, False) == []

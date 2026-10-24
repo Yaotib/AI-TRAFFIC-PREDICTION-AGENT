@@ -2,10 +2,16 @@ import math
 from datetime import datetime, timedelta
 from typing import NamedTuple
 
-from app.schemas import CandidateDeparture, RouteOption
+from app.schemas import (
+    CandidateDeparture,
+    DecisionWarning,
+    RouteOption,
+    WarningCode,
+)
 
 SLOT_MINUTES = 15
 MIN_SAVING_MIN = 5
+LOW_VARIATION_MIN = 3
 
 def deadline_slots(deadline: datetime, now: datetime) -> list[datetime]:
     """Every 15 min in the 2 hours before the deadline, stopping 15 min before it."""
@@ -92,3 +98,32 @@ def recommend_for_preferred(
         return PreferredChoice(None, best, 0, False)
     saved = baseline.duration_minutes - best.duration_minutes
     return PreferredChoice(baseline, best, saved, saved >= MIN_SAVING_MIN)
+
+def build_warnings(
+    candidates: list[CandidateDeparture],
+    slots_requested: int,
+    slots_failed: int,
+    simulated: bool,
+) -> list[DecisionWarning]:
+    """Honest warnings about how far the recommendation can be trusted."""
+    warnings = []
+    if len(candidates) >= 2:
+        durations = [c.duration_minutes for c in candidates]
+        if max(durations) - min(durations) < LOW_VARIATION_MIN:
+            warnings.append(DecisionWarning(
+                code=WarningCode.LOW_VARIATION,
+                message="Estimated trip times barely change across these departure "
+                        "times, so leaving earlier or later makes little difference.",
+            ))
+    if slots_failed > 0:
+        warnings.append(DecisionWarning(
+            code=WarningCode.SLOTS_FAILED,
+            message=f"{slots_failed} of {slots_requested} departure times could not "
+                    "be checked, so this recommendation uses incomplete data.",
+        ))
+    if simulated:
+        warnings.append(DecisionWarning(
+            code=WarningCode.SIMULATED_DATA,
+            message="These times are simulated demo data, not real traffic estimates.",
+        ))
+    return warnings

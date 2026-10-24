@@ -4,6 +4,10 @@ from typing import NamedTuple
 
 from app.schemas import (
     CandidateDeparture,
+    DataSource,
+    DecisionKind,
+    DecisionMode,
+    DecisionResult,
     DecisionWarning,
     RouteOption,
     WarningCode,
@@ -12,6 +16,15 @@ from app.schemas import (
 SLOT_MINUTES = 15
 MIN_SAVING_MIN = 5
 LOW_VARIATION_MIN = 3
+MIN_USABLE_SLOTS = 3
+DEADLINE_RULE = (
+    "Leave as late as possible, as long as the trip is within 5 minutes of the "
+    "fastest option and you arrive at least 10 minutes before your deadline."
+)
+PREFERRED_RULE = (
+    "Keep your planned time unless another departure time saves at least "
+    "5 minutes of driving."
+)
 
 def deadline_slots(deadline: datetime, now: datetime) -> list[datetime]:
     """Every 15 min in the 2 hours before the deadline, stopping 15 min before it."""
@@ -127,3 +140,72 @@ def build_warnings(
             message="These times are simulated demo data, not real traffic estimates.",
         ))
     return warnings
+
+
+def decide_deadline(
+    candidates: list[CandidateDeparture],
+    deadline: datetime,
+    slots_requested: int,
+    simulated: bool,
+) -> DecisionResult:
+    """Full decision for 'I must arrive by...'."""
+    failed = max(0, slots_requested - len(candidates))
+    common = {
+        "mode": DecisionMode.DEADLINE,
+        "data_source": DataSource.SIMULATED if simulated else DataSource.PROVIDER,
+        "candidates": sorted(candidates, key=lambda c: c.departure_time),
+        "deadline": deadline,
+        "slots_requested": slots_requested,
+        "slots_failed": failed,
+        "warnings": build_warnings(candidates, slots_requested, failed, simulated),
+        "rule_summary": DEADLINE_RULE,
+    }
+    if len(candidates) < MIN_USABLE_SLOTS:
+        return DecisionResult(kind=DecisionKind.INSUFFICIENT_DATA, **common)
+    rec = recommend_for_deadline(candidates, deadline)
+    if rec is None:
+        return DecisionResult(kind=DecisionKind.NO_FEASIBLE_TIME, **common)
+    spare = int((deadline - rec.arrival_time).total_seconds() // 60)
+    return DecisionResult(
+        kind=DecisionKind.RECOMMEND_DEPARTURE,
+        recommended=rec,
+        spare_minutes=spare,
+        **common,
+    )
+
+
+def decide_preferred(
+    candidates: list[CandidateDeparture],
+    preferred: datetime,
+    slots_requested: int,
+    simulated: bool,
+) -> DecisionResult:
+    """Full decision for 'I plan to leave at...'."""
+    failed = max(0, slots_requested - len(candidates))
+    common = {
+        "mode": DecisionMode.PREFERRED,
+        "data_source": DataSource.SIMULATED if simulated else DataSource.PROVIDER,
+        "candidates": sorted(candidates, key=lambda c: c.departure_time),
+        "slots_requested": slots_requested,
+        "slots_failed": failed,
+        "warnings": build_warnings(candidates, slots_requested, failed, simulated),
+        "rule_summary": PREFERRED_RULE,
+    }
+    choice = recommend_for_preferred(candidates, preferred)
+    if len(candidates) < MIN_USABLE_SLOTS or choice is None or choice.baseline is None:
+        return DecisionResult(kind=DecisionKind.INSUFFICIENT_DATA, **common)
+    if choice.shift:
+        return DecisionResult(
+            kind=DecisionKind.SHIFT_DEPARTURE,
+            recommended=choice.best,
+            baseline=choice.baseline,
+            minutes_saved=choice.minutes_saved,
+            **common,
+        )
+    return DecisionResult(
+        kind=DecisionKind.KEEP_PLAN,
+        recommended=choice.baseline,
+        baseline=choice.baseline,
+        minutes_saved=choice.minutes_saved,
+        **common,
+    )

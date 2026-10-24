@@ -3,11 +3,13 @@ from datetime import datetime
 from app.engine.decision import (
     build_candidate,
     build_warnings,
+    decide_deadline,
+    decide_preferred,
     preferred_slots,
     recommend_for_deadline,
     recommend_for_preferred,
 )
-from app.schemas import RouteOption, WarningCode
+from app.schemas import DataSource, DecisionKind, RouteOption, WarningCode
 from app.timeutil import ACCRA_TZ
 
 DEADLINE = datetime(2026, 10, 25, 9, 0, tzinfo=ACCRA_TZ)
@@ -103,3 +105,56 @@ def test_warns_on_failed_slots_and_simulated_data():
 def test_clean_data_has_no_warnings():
     cands = make_candidates({"7:00": 30, "7:15": 45})
     assert build_warnings(cands, 2, 0, False) == []
+
+
+def test_decide_deadline_recommends_and_reports_spare_time():
+    result = decide_deadline(make_candidates(PAPER_TABLE), DEADLINE, 8, False)
+    assert result.kind == DecisionKind.RECOMMEND_DEPARTURE
+    assert result.recommended.departure_time.strftime("%H:%M") == "07:15"
+    assert result.spare_minutes == 70
+    assert result.data_source == DataSource.PROVIDER
+
+
+def test_decide_deadline_no_feasible_time():
+    early = datetime(2026, 10, 25, 7, 35, tzinfo=ACCRA_TZ)
+    result = decide_deadline(make_candidates(PAPER_TABLE), early, 8, False)
+    assert result.kind == DecisionKind.NO_FEASIBLE_TIME
+    assert result.recommended is None
+
+
+def test_decide_deadline_too_few_slots():
+    cands = make_candidates({"7:00": 30, "7:15": 35})
+    result = decide_deadline(cands, DEADLINE, 8, False)
+    assert result.kind == DecisionKind.INSUFFICIENT_DATA
+
+
+def test_decide_flags_simulated_data():
+    result = decide_deadline(make_candidates(PAPER_TABLE), DEADLINE, 8, True)
+    assert result.is_simulated is True
+    assert WarningCode.SIMULATED_DATA in [w.code for w in result.warnings]
+
+
+def test_decide_counts_failed_slots():
+    result = decide_deadline(make_candidates(PAPER_TABLE), DEADLINE, 10, False)
+    assert result.slots_failed == 2
+    assert WarningCode.SLOTS_FAILED in [w.code for w in result.warnings]
+
+
+def test_decide_preferred_keeps_plan():
+    table = {"7:45": 47, "8:00": 50, "8:15": 46}
+    result = decide_preferred(make_candidates(table), PREFERRED, 3, False)
+    assert result.kind == DecisionKind.KEEP_PLAN
+    assert result.recommended.departure_time.strftime("%H:%M") == "08:00"
+
+
+def test_decide_preferred_shifts():
+    table = {"7:30": 44, "7:45": 46, "8:00": 50, "8:15": 41}
+    result = decide_preferred(make_candidates(table), PREFERRED, 4, False)
+    assert result.kind == DecisionKind.SHIFT_DEPARTURE
+    assert result.minutes_saved == 9
+
+
+def test_decide_preferred_without_own_slot_is_insufficient():
+    table = {"7:30": 44, "7:45": 46, "8:15": 41}
+    result = decide_preferred(make_candidates(table), PREFERRED, 4, False)
+    assert result.kind == DecisionKind.INSUFFICIENT_DATA

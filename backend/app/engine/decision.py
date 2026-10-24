@@ -33,3 +33,22 @@ def build_candidate(departure: datetime, routes: list[RouteOption]) -> Candidate
         distance_km=km,
         route_summary=fastest.summary,
     )
+
+
+
+
+ARRIVE_EARLY_MIN = 10
+NEAR_FASTEST_MIN = 5
+
+
+def recommend_for_deadline(
+    candidates: list[CandidateDeparture], deadline: datetime
+) -> CandidateDeparture | None:
+    """Latest departure within 5 min of the fastest trip that arrives 10+ min early."""
+    latest_ok = deadline - timedelta(minutes=ARRIVE_EARLY_MIN)
+    acceptable = [c for c in candidates if c.arrival_time <= latest_ok]
+    if not acceptable:
+        return None
+    fastest = min(c.duration_minutes for c in acceptable)
+    near_fastest = [c for c in acceptable if c.duration_minutes <= fastest + NEAR_FASTEST_MIN]
+    return max(near_fastest, key=lambda c: c.departure_time)

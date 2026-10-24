@@ -3,12 +3,14 @@ from datetime import datetime
 from app.engine.decision import (
     build_candidate,
     build_warnings,
+    deadline_slots,
     decide_deadline,
     decide_preferred,
     preferred_slots,
     recommend_for_deadline,
     recommend_for_preferred,
 )
+from app.engine.explain import template_explanation
 from app.schemas import DataSource, DecisionKind, RouteOption, WarningCode
 from app.timeutil import ACCRA_TZ
 
@@ -158,3 +160,78 @@ def test_decide_preferred_without_own_slot_is_insufficient():
     table = {"7:30": 44, "7:45": 46, "8:15": 41}
     result = decide_preferred(make_candidates(table), PREFERRED, 4, False)
     assert result.kind == DecisionKind.INSUFFICIENT_DATA
+
+
+
+def test_explanation_for_recommendation_uses_decision_numbers():
+    result = decide_deadline(make_candidates(PAPER_TABLE), DEADLINE, 8, False)
+    text = template_explanation(result)
+    assert "Leave at 7:15 AM" in text
+    assert "35 minutes" in text
+    assert "7:50 AM" in text
+    assert "70 minutes before" in text
+    assert "not verified live traffic" in text
+
+
+def test_explanation_when_no_time_works():
+    early = datetime(2026, 10, 25, 7, 35, tzinfo=ACCRA_TZ)
+    result = decide_deadline(make_candidates(PAPER_TABLE), early, 8, False)
+    text = template_explanation(result)
+    assert "None of the departure times" in text
+    assert "7:30 AM" in text
+
+
+def test_explanation_for_keeping_plan():
+    table = {"7:45": 47, "8:00": 50, "8:15": 46}
+    result = decide_preferred(make_candidates(table), PREFERRED, 3, False)
+    assert "Keep your plan to leave at 8:00 AM" in template_explanation(result)
+
+
+def test_explanation_for_shift():
+    table = {"7:30": 44, "7:45": 46, "8:00": 50, "8:15": 41}
+    result = decide_preferred(make_candidates(table), PREFERRED, 4, False)
+    text = template_explanation(result)
+    assert "8:15 AM instead of 8:00 AM" in text
+    assert "9 minutes" in text
+
+
+def test_explanation_includes_simulated_warning():
+    result = decide_deadline(make_candidates(PAPER_TABLE), DEADLINE, 8, True)
+    text = template_explanation(result)
+    assert "simulated demo data" in text
+    assert "not verified live traffic" not in text
+
+
+def test_explanation_for_insufficient_data():
+    cands = make_candidates({"7:00": 30, "7:15": 35})
+    result = decide_deadline(cands, DEADLINE, 8, False)
+    assert "could not get enough" in template_explanation(result)
+
+
+
+def hhmm(slots):
+    return [t.strftime("%H:%M") for t in slots]
+
+
+def test_deadline_slots_cover_two_hours_and_stop_15_minutes_before():
+    early = datetime(2026, 10, 25, 6, 0, tzinfo=ACCRA_TZ)
+    assert hhmm(deadline_slots(DEADLINE, early)) == [
+        "07:00", "07:15", "07:30", "07:45", "08:00", "08:15", "08:30", "08:45",
+    ]
+
+
+def test_deadline_slots_skip_times_already_in_the_past():
+    now = datetime(2026, 10, 25, 7, 20, tzinfo=ACCRA_TZ)
+    assert hhmm(deadline_slots(DEADLINE, now)) == [
+        "07:30", "07:45", "08:00", "08:15", "08:30", "08:45",
+    ]
+
+
+def test_deadline_slots_exclude_a_slot_exactly_at_now():
+    now = datetime(2026, 10, 25, 7, 30, tzinfo=ACCRA_TZ)
+    assert hhmm(deadline_slots(DEADLINE, now))[0] == "07:45"
+
+
+def test_deadline_slots_empty_when_deadline_is_too_close():
+    now = datetime(2026, 10, 25, 8, 50, tzinfo=ACCRA_TZ)
+    assert deadline_slots(DEADLINE, now) == []

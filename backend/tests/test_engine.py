@@ -1,6 +1,11 @@
 from datetime import datetime
 
-from app.engine.decision import build_candidate, recommend_for_deadline
+from app.engine.decision import (
+    build_candidate,
+    preferred_slots,
+    recommend_for_deadline,
+    recommend_for_preferred,
+)
 from app.schemas import RouteOption
 from app.timeutil import ACCRA_TZ
 
@@ -36,3 +41,40 @@ def test_deadline_drops_slot_that_is_too_slow():
 def test_deadline_returns_none_when_nothing_is_feasible():
     early = datetime(2026, 10, 25, 7, 35, tzinfo=ACCRA_TZ)
     assert recommend_for_deadline(make_candidates(PAPER_TABLE), early) is None
+
+
+
+
+
+
+PREFERRED = datetime(2026, 10, 25, 8, 0, tzinfo=ACCRA_TZ)
+
+
+def test_preferred_slots_cover_hour_either_side_and_skip_past():
+    early = datetime(2026, 10, 25, 6, 0, tzinfo=ACCRA_TZ)
+    assert len(preferred_slots(PREFERRED, early)) == 9
+    late = datetime(2026, 10, 25, 7, 50, tzinfo=ACCRA_TZ)
+    times = [t.strftime("%H:%M") for t in preferred_slots(PREFERRED, late)]
+    assert times == ["08:00", "08:15", "08:30", "08:45", "09:00"]
+
+
+def test_preferred_keeps_plan_when_saving_is_small():
+    table = {"7:45": 47, "8:00": 50, "8:15": 46}
+    choice = recommend_for_preferred(make_candidates(table), PREFERRED)
+    assert choice.minutes_saved == 4
+    assert choice.shift is False
+
+
+def test_preferred_shifts_when_saving_is_meaningful():
+    table = {"7:30": 44, "7:45": 46, "8:00": 50, "8:15": 41}
+    choice = recommend_for_preferred(make_candidates(table), PREFERRED)
+    assert choice.best.departure_time.strftime("%H:%M") == "08:15"
+    assert choice.minutes_saved == 9
+    assert choice.shift is True
+
+
+def test_preferred_saving_of_exactly_five_counts():
+    table = {"8:00": 50, "8:15": 45}
+    choice = recommend_for_preferred(make_candidates(table), PREFERRED)
+    assert choice.minutes_saved == 5
+    assert choice.shift is True

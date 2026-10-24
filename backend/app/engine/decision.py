@@ -1,10 +1,11 @@
 import math
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 from app.schemas import CandidateDeparture, RouteOption
 
 SLOT_MINUTES = 15
-
+MIN_SAVING_MIN = 5
 
 def deadline_slots(deadline: datetime, now: datetime) -> list[datetime]:
     """Every 15 min in the 2 hours before the deadline, stopping 15 min before it."""
@@ -52,3 +53,42 @@ def recommend_for_deadline(
     fastest = min(c.duration_minutes for c in acceptable)
     near_fastest = [c for c in acceptable if c.duration_minutes <= fastest + NEAR_FASTEST_MIN]
     return max(near_fastest, key=lambda c: c.departure_time)
+
+
+
+
+def preferred_slots(preferred: datetime, now: datetime) -> list[datetime]:
+    """Every 15 min from 1 hour before to 1 hour after the preferred time."""
+    start = preferred - timedelta(hours=1)
+    stop = preferred + timedelta(hours=1)
+    slots = []
+    t = start
+    while t <= stop:
+        if t > now:
+            slots.append(t)
+        t += timedelta(minutes=SLOT_MINUTES)
+    return slots
+
+
+class PreferredChoice(NamedTuple):
+    baseline: CandidateDeparture | None  # the user's own plan
+    best: CandidateDeparture             # the fastest option checked
+    minutes_saved: int
+    shift: bool                          # True = suggest a different time
+
+
+def recommend_for_preferred(
+    candidates: list[CandidateDeparture], preferred: datetime
+) -> PreferredChoice | None:
+    """Suggest a different time only if it saves at least 5 minutes of driving."""
+    if not candidates:
+        return None
+    baseline = next((c for c in candidates if c.departure_time == preferred), None)
+    best = min(
+        candidates,
+        key=lambda c: (c.duration_minutes, abs(c.departure_time - preferred)),
+    )
+    if baseline is None:
+        return PreferredChoice(None, best, 0, False)
+    saved = baseline.duration_minutes - best.duration_minutes
+    return PreferredChoice(baseline, best, saved, saved >= MIN_SAVING_MIN)

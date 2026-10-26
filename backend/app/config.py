@@ -1,13 +1,13 @@
-"""Application settings.
+"""Application settings (config.py).
 
 All configuration comes from environment variables (or a local .env file).
-Empty values in .env are treated as "not set", so the template file
-.env.example can list every variable with no value.
+Empty values are treated as "not set", so .env.example can list every
+variable with no value.
 """
 
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,10 +21,17 @@ class Settings(BaseSettings):
 
     # --- Keys (never logged, never returned by any endpoint) ---
     google_maps_api_key: SecretStr | None = None
-    nvidia_api_key: SecretStr | None = None
+    # Held as a secret, but exposed to llm.py as a plain string through the
+    # groq_api_key property below (the OpenAI client needs a real str).
+    groq_key: SecretStr | None = Field(default=None, validation_alias="GROQ_API_KEY")
 
-    # --- Model ---
-    llm_model: str = ""
+    # --- AI model (read by app/agent/llm.py and loop.py) ---
+    # Base URL and model name defaults come from scripts/spike_groq.py.
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "llama-3.3-70b-versatile"
+    llm_timeout_s: float = 30.0
+    # The agent needs a step cap but no number is specified. Starting value.
+    llm_max_steps: int = 4
 
     # --- Switches ---
     demo_mode: bool = False
@@ -52,6 +59,10 @@ class Settings(BaseSettings):
     allowed_origins: str = ""
 
     @property
+    def groq_api_key(self) -> str | None:
+        return self.groq_key.get_secret_value() if self.groq_key else None
+
+    @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
@@ -61,7 +72,7 @@ class Settings(BaseSettings):
 
     @property
     def ai_key_configured(self) -> bool:
-        return self.nvidia_api_key is not None
+        return self.groq_key is not None
 
 
 @lru_cache

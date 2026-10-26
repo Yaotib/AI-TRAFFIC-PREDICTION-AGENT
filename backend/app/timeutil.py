@@ -4,7 +4,7 @@ Rule from the guide: all times are Accra local time, converted to UTC only
 when talking to Google.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 ACCRA_TZ = ZoneInfo("Africa/Accra")
@@ -27,7 +27,7 @@ def as_accra(dt: datetime) -> datetime:
 
 def to_utc(dt: datetime) -> datetime:
     """Convert to UTC. Use ONLY at the Google boundary."""
-    return as_accra(dt).astimezone(timezone.utc)
+    return as_accra(dt).astimezone(UTC)
 
 
 def to_google_timestamp(dt: datetime) -> str:
@@ -38,7 +38,7 @@ def to_google_timestamp(dt: datetime) -> str:
 def from_utc(dt: datetime) -> datetime:
     """Convert a UTC datetime (e.g. from Google) back to Accra local time."""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(ACCRA_TZ)
 
 
@@ -58,3 +58,16 @@ def add_minutes(dt: datetime, minutes: int) -> datetime:
 def format_clock(dt: datetime) -> str:
     """Human display such as '07:45' in Accra time."""
     return as_accra(dt).strftime("%H:%M")
+
+
+def now_local() -> datetime:
+    """Current time in Accra, as a timezone-aware datetime."""
+    return now_accra()
+
+
+def parse_local(text: str) -> datetime:
+    """Parse a local time like '2026-10-26T08:30' as Accra time.
+
+    Raises ValueError if the text isn't a valid ISO date and time.
+    """
+    return as_accra(datetime.fromisoformat(text.strip()))

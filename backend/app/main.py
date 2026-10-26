@@ -3,8 +3,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import HealthResponse
-from app.settings import get_settings
+from .config import get_settings
+from .schemas import HealthResponse
 
 
 def create_app() -> FastAPI:

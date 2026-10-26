@@ -1,5 +1,5 @@
 # backend/tests/test_routing.py
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -10,7 +10,7 @@ from app.schemas import Place
 
 A = Place(id="p1", name="A", lat=5.66, lng=-0.16, source="google_geocoding")
 B = Place(id="p2", name="B", lat=5.55, lng=-0.20, source="google_geocoding")
-DEP = datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc)
+DEP = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 
 
 @respx.mock

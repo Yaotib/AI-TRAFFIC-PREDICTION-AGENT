@@ -1,6 +1,6 @@
 
 # backend/app/timeutil.py
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from .config import get_settings
@@ -25,7 +25,7 @@ def parse_local(value: str) -> datetime:
 
 
 def to_utc_rfc3339(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def fmt_time(dt: datetime) -> str:

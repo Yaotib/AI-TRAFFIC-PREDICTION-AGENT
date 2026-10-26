@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+ENV/
+env/
+
+# Build and distribution output
+dist/
+dist-ssr/
+build/
+staticfiles/
+
+# Environment variables & secrets (never commit secrets/credentials)
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

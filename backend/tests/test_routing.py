@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 import respx
-
 from app.providers.routing import ROUTES_URL, RoutingError, compute_routes
 from app.schemas import Place
 

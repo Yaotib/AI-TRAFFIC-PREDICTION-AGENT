@@ -4,7 +4,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import respx
-
 from app.providers import context
 from app.providers.context import NAGER, OPEN_METEO, get_context
 

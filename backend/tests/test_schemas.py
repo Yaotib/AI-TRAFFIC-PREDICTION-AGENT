@@ -1,10 +1,9 @@
 from datetime import datetime, timedelta
 
 import pytest
-from pydantic import ValidationError
-
 from app import schemas as s
 from app.timeutil import ACCRA_TZ
+from pydantic import ValidationError
 
 
 def _candidate(minutes=30):

@@ -1,211 +1,192 @@
-import math
+# backend/app/engine/decision.py
 from datetime import datetime, timedelta
-from typing import NamedTuple
 
-from app.schemas import (
-    CandidateDeparture,
-    DataSource,
-    DecisionKind,
-    DecisionMode,
-    DecisionResult,
-    DecisionWarning,
-    RouteOption,
-    WarningCode,
-)
+from ..schemas import Candidate, CandidateView, DataLabels, DecisionResult, RouteOption
+from ..timeutil import fmt_date, fmt_time
 
-SLOT_MINUTES = 15
-MIN_SAVING_MIN = 5
-LOW_VARIATION_MIN = 3
-MIN_USABLE_SLOTS = 3
-DEADLINE_RULE = (
-    "Leave as late as possible, as long as the trip is within 5 minutes of the "
-    "fastest option and you arrive at least 10 minutes before your deadline."
+LOW_VARIATION_MIN = 3  # tunable: below this spread, flag low variation
+LOW_VARIATION = (
+    "Traffic estimates barely vary across these times, so timing may matter little "
+    "or the provider's data may not reflect traffic on this route."
 )
-PREFERRED_RULE = (
-    "Keep your planned time unless another departure time saves at least "
-    "5 minutes of driving."
-)
+SIMULATED = "This result uses simulated demo data, not real traffic."
 
-def deadline_slots(deadline: datetime, now: datetime) -> list[datetime]:
-    """Every 15 min in the 2 hours before the deadline, stopping 15 min before it."""
-    start = deadline - timedelta(hours=2)
-    stop = deadline - timedelta(minutes=SLOT_MINUTES)
-    slots = []
+
+def build_candidate(departure: datetime, options: list[RouteOption]) -> Candidate:
+    best = min(options, key=lambda o: o.duration_s)
+    duration_min = round(best.duration_s / 60)
+    static_min = (
+        round(best.static_duration_s / 60) if best.static_duration_s is not None else None
+    )
+    return Candidate(
+        departure=departure,
+        arrival=departure + timedelta(minutes=duration_min),
+        duration_min=duration_min,
+        static_duration_min=static_min,
+        distance_km=round(best.distance_m / 1000, 1),
+        route_description=best.description,
+        alternatives_count=len(options),
+    )
+
+
+def _ceil_to_5(dt: datetime) -> datetime:
+    dt = dt.replace(second=0, microsecond=0)
+    return dt + timedelta(minutes=(-dt.minute) % 5)
+
+
+def departure_slots(
+    mode: str, target: datetime, now: datetime, step_min: int = 15, window_min: int = 120
+) -> list[datetime]:
+    earliest = _ceil_to_5(now + timedelta(minutes=2))
+    if mode == "arrive_by":
+        start = max(earliest, _ceil_to_5(target - timedelta(minutes=window_min)))
+        end = target - timedelta(minutes=15)
+    else:
+        half = window_min // 2
+        start = max(earliest, target - timedelta(minutes=half))
+        end = target + timedelta(minutes=half)
+    slots: list[datetime] = []
     t = start
-    while t <= stop:
-        if t > now:
-            slots.append(t)
-        t += timedelta(minutes=SLOT_MINUTES)
+    while t <= end:
+        slots.append(t)
+        t += timedelta(minutes=step_min)
+    if mode == "depart_around" and target >= earliest and target not in slots:
+        slots.append(target)
+        slots.sort()
     return slots
 
 
-def build_candidate(departure: datetime, routes: list[RouteOption]) -> CandidateDeparture:
-    """Pick the fastest route at this departure time and turn it into a candidate."""
-    if not routes:
-        raise ValueError("no routes to choose from")
-    fastest = min(routes, key=lambda r: r.duration_seconds)
-    minutes = math.ceil(fastest.duration_seconds / 60)
-    km = round(fastest.distance_meters / 1000, 1) if fastest.distance_meters is not None else None
-    return CandidateDeparture(
-        departure_time=departure,
-        duration_minutes=minutes,
-        arrival_time=departure + timedelta(minutes=minutes),
-        distance_km=km,
-        route_summary=fastest.summary,
+def _view(c: Candidate) -> CandidateView:
+    delay = None
+    if c.static_duration_min is not None:
+        delay = max(0, c.duration_min - c.static_duration_min)
+    return CandidateView(
+        departure_local=fmt_time(c.departure),
+        arrival_local=fmt_time(c.arrival),
+        duration_min=c.duration_min,
+        static_duration_min=c.static_duration_min,
+        traffic_delay_min=delay,
+        distance_km=c.distance_km,
+        route_description=c.route_description,
+        alternatives_count=c.alternatives_count,
     )
 
 
-
-
-ARRIVE_EARLY_MIN = 10
-NEAR_FASTEST_MIN = 5
-
-
-def recommend_for_deadline(
-    candidates: list[CandidateDeparture], deadline: datetime
-) -> CandidateDeparture | None:
-    """Latest departure within 5 min of the fastest trip that arrives 10+ min early."""
-    latest_ok = deadline - timedelta(minutes=ARRIVE_EARLY_MIN)
-    acceptable = [c for c in candidates if c.arrival_time <= latest_ok]
-    if not acceptable:
-        return None
-    fastest = min(c.duration_minutes for c in acceptable)
-    near_fastest = [c for c in acceptable if c.duration_minutes <= fastest + NEAR_FASTEST_MIN]
-    return max(near_fastest, key=lambda c: c.departure_time)
-
-
-
-
-def preferred_slots(preferred: datetime, now: datetime) -> list[datetime]:
-    """Every 15 min from 1 hour before to 1 hour after the preferred time."""
-    start = preferred - timedelta(hours=1)
-    stop = preferred + timedelta(hours=1)
-    slots = []
-    t = start
-    while t <= stop:
-        if t > now:
-            slots.append(t)
-        t += timedelta(minutes=SLOT_MINUTES)
-    return slots
-
-
-class PreferredChoice(NamedTuple):
-    baseline: CandidateDeparture | None  # the user's own plan
-    best: CandidateDeparture             # the fastest option checked
-    minutes_saved: int
-    shift: bool                          # True = suggest a different time
-
-
-def recommend_for_preferred(
-    candidates: list[CandidateDeparture], preferred: datetime
-) -> PreferredChoice | None:
-    """Suggest a different time only if it saves at least 5 minutes of driving."""
-    if not candidates:
-        return None
-    baseline = next((c for c in candidates if c.departure_time == preferred), None)
-    best = min(
-        candidates,
-        key=lambda c: (c.duration_minutes, abs(c.departure_time - preferred)),
-    )
-    if baseline is None:
-        return PreferredChoice(None, best, 0, False)
-    saved = baseline.duration_minutes - best.duration_minutes
-    return PreferredChoice(baseline, best, saved, saved >= MIN_SAVING_MIN)
-
-def build_warnings(
-    candidates: list[CandidateDeparture],
-    slots_requested: int,
-    slots_failed: int,
-    simulated: bool,
-) -> list[DecisionWarning]:
-    """Honest warnings about how far the recommendation can be trusted."""
-    warnings = []
-    if len(candidates) >= 2:
-        durations = [c.duration_minutes for c in candidates]
-        if max(durations) - min(durations) < LOW_VARIATION_MIN:
-            warnings.append(DecisionWarning(
-                code=WarningCode.LOW_VARIATION,
-                message="Estimated trip times barely change across these departure "
-                        "times, so leaving earlier or later makes little difference.",
-            ))
-    if slots_failed > 0:
-        warnings.append(DecisionWarning(
-            code=WarningCode.SLOTS_FAILED,
-            message=f"{slots_failed} of {slots_requested} departure times could not "
-                    "be checked, so this recommendation uses incomplete data.",
-        ))
-    if simulated:
-        warnings.append(DecisionWarning(
-            code=WarningCode.SIMULATED_DATA,
-            message="These times are simulated demo data, not real traffic estimates.",
-        ))
-    return warnings
-
-
-def decide_deadline(
-    candidates: list[CandidateDeparture],
-    deadline: datetime,
-    slots_requested: int,
-    simulated: bool,
+def decide(
+    *,
+    mode: str,
+    candidates: list[Candidate],
+    target: datetime,
+    origin_name: str,
+    destination_name: str,
+    labels: DataLabels,
+    buffer_min: int = 10,
+    gain_min: int = 5,
+    failed_slots: int = 0,
+    requested_slots: int = 0,
 ) -> DecisionResult:
-    """Full decision for 'I must arrive by...'."""
-    failed = max(0, slots_requested - len(candidates))
-    common = {
-        "mode": DecisionMode.DEADLINE,
-        "data_source": DataSource.SIMULATED if simulated else DataSource.PROVIDER,
-        "candidates": sorted(candidates, key=lambda c: c.departure_time),
-        "deadline": deadline,
-        "slots_requested": slots_requested,
-        "slots_failed": failed,
-        "warnings": build_warnings(candidates, slots_requested, failed, simulated),
-        "rule_summary": DEADLINE_RULE,
-    }
-    if len(candidates) < MIN_USABLE_SLOTS:
-        return DecisionResult(kind=DecisionKind.INSUFFICIENT_DATA, **common)
-    rec = recommend_for_deadline(candidates, deadline)
-    if rec is None:
-        return DecisionResult(kind=DecisionKind.NO_FEASIBLE_TIME, **common)
-    spare = int((deadline - rec.arrival_time).total_seconds() // 60)
-    return DecisionResult(
-        kind=DecisionKind.RECOMMEND_DEPARTURE,
-        recommended=rec,
-        spare_minutes=spare,
-        **common,
-    )
-
-
-def decide_preferred(
-    candidates: list[CandidateDeparture],
-    preferred: datetime,
-    slots_requested: int,
-    simulated: bool,
-) -> DecisionResult:
-    """Full decision for 'I plan to leave at...'."""
-    failed = max(0, slots_requested - len(candidates))
-    common = {
-        "mode": DecisionMode.PREFERRED,
-        "data_source": DataSource.SIMULATED if simulated else DataSource.PROVIDER,
-        "candidates": sorted(candidates, key=lambda c: c.departure_time),
-        "slots_requested": slots_requested,
-        "slots_failed": failed,
-        "warnings": build_warnings(candidates, slots_requested, failed, simulated),
-        "rule_summary": PREFERRED_RULE,
-    }
-    choice = recommend_for_preferred(candidates, preferred)
-    if len(candidates) < MIN_USABLE_SLOTS or choice is None or choice.baseline is None:
-        return DecisionResult(kind=DecisionKind.INSUFFICIENT_DATA, **common)
-    if choice.shift:
-        return DecisionResult(
-            kind=DecisionKind.SHIFT_DEPARTURE,
-            recommended=choice.best,
-            baseline=choice.baseline,
-            minutes_saved=choice.minutes_saved,
-            **common,
+    cs = sorted(candidates, key=lambda c: c.departure)
+    warnings: list[str] = []
+    if labels.simulated:
+        warnings.append(SIMULATED)
+    if failed_slots:
+        warnings.append(
+            f"{failed_slots} of {requested_slots} time slots could not be retrieved, "
+            "so fewer options were compared."
         )
-    return DecisionResult(
-        kind=DecisionKind.KEEP_PLAN,
-        recommended=choice.baseline,
-        baseline=choice.baseline,
-        minutes_saved=choice.minutes_saved,
-        **common,
+
+    def build(
+        status: str,
+        rule: str,
+        rec: Candidate | None = None,
+        baseline: Candidate | None = None,
+        baseline_label: str | None = None,
+        saved: int | None = None,
+        margin: int | None = None,
+        spread: int = 0,
+        extra_warnings: tuple[str, ...] = (),
+    ) -> DecisionResult:
+        return DecisionResult(
+            status=status,
+            mode=mode,
+            rule_applied=rule,
+            origin_name=origin_name,
+            destination_name=destination_name,
+            date_local=fmt_date(target),
+            deadline_local=fmt_time(target) if mode == "arrive_by" else None,
+            desired_departure_local=fmt_time(target) if mode == "depart_around" else None,
+            recommended=_view(rec) if rec else None,
+            baseline=_view(baseline) if baseline else None,
+            baseline_label=baseline_label,
+            time_saved_min=saved,
+            deadline_margin_min=margin,
+            spread_min=spread,
+            buffer_min=buffer_min if mode == "arrive_by" else None,
+            gain_min=gain_min,
+            candidates=[_view(c) for c in cs],
+            warnings=warnings + list(extra_warnings),
+            labels=labels,
+        )
+
+    if len(cs) < 2:
+        return build(
+            "insufficient_data",
+            "fewer_than_two_time_slots",
+            extra_warnings=("Not enough time slots could be retrieved to compare.",),
+        )
+
+    durations = [c.duration_min for c in cs]
+    spread = max(durations) - min(durations)
+    if spread < LOW_VARIATION_MIN:
+        warnings.append(LOW_VARIATION)
+
+    if mode == "arrive_by":
+        feasible = [c for c in cs if c.arrival + timedelta(minutes=buffer_min) <= target]
+        if not feasible:
+            return build(
+                "no_feasible_time",
+                "no_departure_arrives_before_deadline_with_buffer",
+                spread=spread,
+            )
+        fastest = min(c.duration_min for c in feasible)
+        acceptable = [c for c in feasible if c.duration_min <= fastest + gain_min]
+        rec = max(acceptable, key=lambda c: c.departure)
+        baseline = max(feasible, key=lambda c: c.departure)
+        margin = int((target - rec.arrival).total_seconds() // 60)
+        return build(
+            "recommended",
+            "arrive_by_latest_departure_within_gain_of_fastest_feasible",
+            rec=rec,
+            baseline=baseline,
+            baseline_label=f"leaving at {fmt_time(baseline.departure)}",
+            saved=baseline.duration_min - rec.duration_min,
+            margin=margin,
+            spread=spread,
+        )
+
+    baseline = min(cs, key=lambda c: abs((c.departure - target).total_seconds()))
+    best = min(
+        cs,
+        key=lambda c: (c.duration_min, abs((c.departure - target).total_seconds())),
+    )
+    gain = baseline.duration_min - best.duration_min
+    label = f"leaving at {fmt_time(baseline.departure)}"
+    if gain >= gain_min:
+        return build(
+            "recommended",
+            "shift_departure_for_meaningful_gain",
+            rec=best,
+            baseline=baseline,
+            baseline_label=label,
+            saved=gain,
+            spread=spread,
+        )
+    return build(
+        "keep_desired_time",
+        "no_meaningful_gain_keep_desired_time",
+        rec=baseline,
+        baseline=baseline,
+        baseline_label=label,
+        saved=0,
+        spread=spread,
     )

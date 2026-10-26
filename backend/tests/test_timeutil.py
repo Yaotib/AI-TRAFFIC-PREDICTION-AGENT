@@ -4,28 +4,40 @@ from zoneinfo import ZoneInfo
 from app import timeutil as t
 
 
-def test_naive_is_read_as_accra_local():
-    assert t.as_accra(datetime(2026, 10, 26, 7, 30)).tzinfo == t.ACCRA_TZ
+def test_parse_naive_datetime_as_accra_local():
+    dt = t.parse_local("2026-10-26T07:30")
+
+    assert dt.tzinfo == t.tz()
+    assert dt.hour == 7
+    assert dt.minute == 30
 
 
-def test_to_google_timestamp_is_utc_z():
-    assert (
-        t.to_google_timestamp(datetime(2026, 10, 26, 7, 30)) == "2026-10-26T07:30:00Z"
-    )
+def test_parse_datetime_with_timezone_converts_to_accra():
+    dt = t.parse_local("2026-10-26T08:30+01:00")
+
+    # 08:30 in UTC+1 is 07:30 in Accra (UTC+0).
+    assert dt.hour == 7
+    assert dt.minute == 30
+    assert dt.tzinfo == t.tz()
 
 
-def test_other_timezone_is_converted():
-    # 08:30 in Lagos (UTC+1) is 07:30 in Accra
-    lagos = datetime(2026, 10, 26, 8, 30, tzinfo=ZoneInfo("Africa/Lagos"))
-    assert t.as_accra(lagos).hour == 7
+def test_to_utc_rfc3339_formats_utc_timestamp():
+    dt = datetime(2026, 10, 26, 7, 30, tzinfo=t.tz())
+
+    assert t.to_utc_rfc3339(dt) == "2026-10-26T07:30:00Z"
 
 
-def test_round_trip_utc():
-    dt = t.as_accra(datetime(2026, 10, 26, 7, 30))
-    assert t.from_utc(t.to_utc(dt)) == dt
+def test_fmt_time():
+    dt = datetime(2026, 10, 26, 7, 30, tzinfo=t.tz())
+
+    assert t.fmt_time(dt) == "07:30"
 
 
-def test_minutes_and_clock():
-    a = datetime(2026, 10, 26, 7, 30)
-    assert t.minutes_between(a, t.add_minutes(a, 42)) == 42
-    assert t.format_clock(a) == "07:30"
+def test_fmt_date():
+    dt = datetime(2026, 10, 26, 7, 30, tzinfo=t.tz())
+
+    assert t.fmt_date(dt) == "2026-10-26"
+
+
+def test_accra_timezone_is_utc():
+    assert datetime(2026, 10, 26, 7, 30, tzinfo=t.ACCRA_TZ).utcoffset().total_seconds() == 0

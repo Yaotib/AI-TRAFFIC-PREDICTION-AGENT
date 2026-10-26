@@ -1,7 +1,7 @@
 # backend/scripts/spike_google.py
 """Feasibility spike. Run from backend/:  python scripts/spike_google.py"""
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -53,7 +53,7 @@ def main():
                     "destination": {"location": {"latLng": {"latitude": d["lat"], "longitude": d["lng"]}}},
                     "travelMode": "DRIVE",
                     "routingPreference": "TRAFFIC_AWARE",
-                    "departureTime": dep.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "departureTime": dep.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "computeAlternativeRoutes": True,
                 }
                 r = client.post(

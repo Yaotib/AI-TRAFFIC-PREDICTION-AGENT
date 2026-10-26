@@ -1,3 +1,4 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,25 +8,25 @@ export default defineConfig({
   server: {
     port: 3000,
   },
-  // Disable inline source maps — prevents a Node.js native heap assertion
-  // crash (genSourceMapUrl) that occurs on some Node versions with large maps.
+  // Disable inline source maps to avoid Node.js native heap assertion crashes.
   css: {
     devSourcemap: false,
   },
   build: {
     sourcemap: false,
-    // Split mapbox-gl into its own chunk so it isn't inlined into main bundle
+    // Split Mapbox into its own chunk.
     rollupOptions: {
       output: {
-        manualChunks: {
-          mapbox: ['mapbox-gl'],
+        manualChunks(id) {
+          if (id.includes('node_modules/mapbox-gl')) {
+            return 'mapbox'
+          }
         },
       },
     },
   },
-  // Prevent esbuild/Rollup from pre-bundling mapbox-gl (it's huge and causes OOM)
+  // Prevent Mapbox from being pre-bundled during development.
   optimizeDeps: {
     exclude: ['mapbox-gl'],
   },
 })
-

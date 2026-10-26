@@ -1,6 +1,6 @@
 // ── Zustand store for MetroRoute ───────────────────────────────────────────
 import { create } from 'zustand';
-import { MOCK_ROUTES, MOCK_TURNS, MOCK_ALERTS } from '../lib/api';
+import { MOCK_ROUTES, MOCK_TURNS, MOCK_ALERTS } from '../lib/mock-data';
 import type { RouteState, RouteActions, SSERouteUpdate } from '../lib/types';
 
 type Store = RouteState & RouteActions;

@@ -1,2 +1,7 @@
-// Re-exported from components/RouteCard for backward compatibility
-export { RouteCard } from '../components/RouteCard';
+
+/**
+ * Re-exported from RouteCard for backward compatibility.
+ * Keeps existing imports working while using the MetroRoute dashboard's
+ * shared RouteCard component.
+ */
+export { RouteCard } from "./RouteCard";

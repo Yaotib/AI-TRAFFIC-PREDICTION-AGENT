@@ -2,7 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useRouteStore } from '../lib/store';
-import { fetchRoutes } from '../lib/api';
+import { fetchRoutes } from '../lib/mock-data';
 import { useTrafficSSE } from '../lib/useTrafficSSE';
 
 import { TopBar }        from '../components/TopBar';

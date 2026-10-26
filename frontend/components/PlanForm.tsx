@@ -1,2 +1,7 @@
-// Re-exported from components/LocationPanel for backward compatibility
-export { LocationPanel } from '../components/LocationPanel';
+
+/**
+ * Re-exported from LocationPanel for backward compatibility.
+ * Keeps existing imports working while using MetroRoute's shared
+ * LocationPanel component.
+ */
+export { LocationPanel } from "./LocationPanel";

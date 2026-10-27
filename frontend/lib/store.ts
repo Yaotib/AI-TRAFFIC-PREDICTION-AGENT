@@ -1,9 +1,18 @@
 // ── Zustand store for MetroRoute ───────────────────────────────────────────
 import { create } from 'zustand';
 import { MOCK_ROUTES, MOCK_TURNS, MOCK_ALERTS } from '../lib/mock-data';
-import type { RouteState, RouteActions, SSERouteUpdate } from '../lib/types';
+import type {
+  RouteState,
+  RouteActions,
+  SSERouteUpdate,
+  DecisionResult,
+} from '../lib/types';
 
-type Store = RouteState & RouteActions;
+type Store = RouteState &
+  RouteActions & {
+    planningResult: DecisionResult | null;
+    setPlanningResult: (result: DecisionResult | null) => void;
+  };
 
 export const useRouteStore = create<Store>((set) => ({
   // ── Initial state ──────────────────────────────────────────────────────
@@ -17,8 +26,9 @@ export const useRouteStore = create<Store>((set) => ({
   alerts: MOCK_ALERTS,
   activeFilter: 'fastest',
   isNavigating: false,
-  liveGpsLocked: true,
-  lastUpdated: new Date(),
+  liveGpsLocked: false,
+  lastUpdated: null,
+  planningResult: null,
 
   // ── Actions ────────────────────────────────────────────────────────────
   setOrigin: (v) => set({ origin: v }),
@@ -26,7 +36,7 @@ export const useRouteStore = create<Store>((set) => ({
   setDepartureTime: (v) => set({ departureTime: v }),
 
   setSelectedRoute: (id) => set({ selectedRouteId: id }),
-
+  setPlanningResult: (result) => set({ planningResult: result }),
   setActiveFilter: (f) => set({ activeFilter: f }),
 
   startNavigation: () => set({ isNavigating: true }),

@@ -67,6 +67,15 @@ def _parse_routes(
             continue
 
         typical_duration = route.get("duration_typical")
+        geometry = route.get("geometry")
+        coordinates = (
+            geometry.get("coordinates")
+            if isinstance(geometry, dict)
+            else None
+        )
+
+        if not coordinates:
+            coordinates = None
 
         if provider == "Mapbox":
             static_duration = (
@@ -85,6 +94,7 @@ def _parse_routes(
                 static_duration_s=static_duration,
                 distance_m=max(1, round(distance)),
                 description=description,
+                coordinates=coordinates,
             )
         )
 
@@ -108,7 +118,8 @@ async def _fetch_base_routes(
             params={
                 "alternatives": "true",
                 "steps": "false",
-                "overview": "false",
+                "overview": "full",
+                "geometries": "geojson",
             },
             headers={"User-Agent": "TrafficPredictionAgent/0.1"},
         )
@@ -144,7 +155,8 @@ async def _fetch_mapbox_routes(
                 "depart_at": departure.isoformat(timespec="seconds"),
                 "alternatives": "true",
                 "steps": "false",
-                "overview": "false",
+                "overview": "full",
+                "geometries": "geojson",
             },
         )
         response.raise_for_status()
@@ -213,6 +225,7 @@ async def _sweep_osrm(
                 static_duration_s=route.static_duration_s,
                 distance_m=route.distance_m,
                 description=route.description,
+                coordinates=route.coordinates,
             )
             for route in base_routes
         ]

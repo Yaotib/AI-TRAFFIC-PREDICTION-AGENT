@@ -26,6 +26,7 @@ def build_candidate(departure: datetime, options: list[RouteOption]) -> Candidat
         distance_km=round(best.distance_m / 1000, 1),
         route_description=best.description,
         alternatives_count=len(options),
+        coordinates=best.coordinates,
     )
 
 
@@ -69,6 +70,7 @@ def _view(c: Candidate) -> CandidateView:
         distance_km=c.distance_km,
         route_description=c.route_description,
         alternatives_count=c.alternatives_count,
+        coordinates=c.coordinates,
     )
 
 

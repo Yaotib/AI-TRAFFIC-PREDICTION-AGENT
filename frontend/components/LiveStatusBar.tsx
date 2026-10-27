@@ -8,7 +8,7 @@ export function LiveStatusBar() {
 
   const updatedAgo = lastUpdated
     ? formatDistanceToNow(lastUpdated)
-    : 'just now';
+    : 'no updates yet';
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-white/95 backdrop-blur-sm rounded-full px-5 py-2 flex items-center gap-3 shadow-md border border-gray-100 text-xs font-medium text-gray-600 whitespace-nowrap">
@@ -20,7 +20,7 @@ export function LiveStatusBar() {
             liveGpsLocked ? 'bg-emerald-500' : 'bg-gray-400',
           ].join(' ')}
         />
-        {liveGpsLocked ? 'Live GPS Satellite Locked' : 'GPS Signal Lost'}
+        {liveGpsLocked ? 'GPS connected' : 'GPS status unavailable'}
       </span>
 
       <span className="text-gray-300">|</span>

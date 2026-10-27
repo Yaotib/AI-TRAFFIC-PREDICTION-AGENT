@@ -1,7 +1,9 @@
 # backend/app/main.py
 import logging
+import sqlite3
 import time
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +15,17 @@ from .agent.loop import run_agent
 from .config import get_settings
 from .providers.geocoding import GeocodingError
 from .providers.routing import RoutingError
-from .schemas import AskRequest, AskResponse, DecisionResult, PlanRequest
+from .schemas import (
+    ActualTripRequest,
+    ActualTripResponse,
+    AskRequest,
+    AskResponse,
+    DecisionResult,
+    EvaluationResponse,
+    PlanRequest,
+)
 from .services.planner import PlanError, plan_from_text
+from .services.traffic_store import get_evaluation, record_actual_trip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 # httpx logs full request URLs at INFO, which would put the Google key in the logs.
@@ -71,3 +82,98 @@ async def api_plan(request: Request, body: PlanRequest):
 @limiter.limit("6/minute")
 async def api_ask(request: Request, body: AskRequest):
     return await run_agent(body.messages)
+
+
+@app.post(
+    "/api/trips/actual",
+    response_model=ActualTripResponse,
+    status_code=201,
+)
+@limiter.limit("20/minute")
+def api_record_actual_trip(
+    request: Request,
+    body: ActualTripRequest,
+):
+    """Record the observed duration of a previously predicted journey."""
+    observation_source = body.observation_source.strip()
+
+    if not observation_source:
+        raise HTTPException(
+            status_code=422,
+            detail="Observation source cannot be empty.",
+        )
+
+    observed_at = datetime.now(UTC)
+
+    try:
+        trip_id = record_actual_trip(
+            prediction_id=body.prediction_id,
+            actual_duration_min=body.actual_duration_min,
+            observation_source=observation_source,
+            observed_at=observed_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+    except sqlite3.IntegrityError as exc:
+        error_message = str(exc)
+
+        if "UNIQUE constraint failed" in error_message:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An actual journey has already been recorded "
+                    "for this prediction."
+                ),
+            ) from exc
+
+        if "FOREIGN KEY constraint failed" in error_message:
+            raise HTTPException(
+                status_code=404,
+                detail="Prediction not found.",
+            ) from exc
+
+        log.exception("Database integrity error while recording actual trip.")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not record the actual journey.",
+        ) from exc
+    except sqlite3.Error as exc:
+        log.exception("Database error while recording actual trip.")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not record the actual journey.",
+        ) from exc
+    except OSError as exc:
+        log.exception("Storage error while recording actual trip.")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not access traffic history storage.",
+        ) from exc
+
+    return ActualTripResponse(
+        id=trip_id,
+        prediction_id=body.prediction_id,
+        actual_duration_min=body.actual_duration_min,
+        observed_at=observed_at.isoformat(),
+        observation_source=observation_source,
+    )
+
+
+@app.get(
+    "/api/evaluation",
+    response_model=EvaluationResponse,
+)
+@limiter.limit("30/minute")
+def api_evaluation(request: Request):
+    """Return prediction accuracy metrics for observed journeys."""
+    try:
+        return get_evaluation()
+    except (sqlite3.Error, OSError):
+        log.exception("Could not evaluate traffic predictions.")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not evaluate traffic predictions.",
+        ) from None

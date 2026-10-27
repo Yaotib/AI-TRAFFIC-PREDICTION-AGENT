@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     google_maps_api_key: str = ""
+    mapbox_access_token: str = ""
+    mapbox_enabled: bool = True
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     llm_model: str = "llama-3.3-70b-versatile"

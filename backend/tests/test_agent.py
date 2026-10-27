@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 
 import httpx
 import openai
+
 from app.agent.loop import run_agent
 from app.config import get_settings
 from app.schemas import ChatMessage

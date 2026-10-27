@@ -1,110 +1,264 @@
-# backend/app/providers/routing.py
-import asyncio
-import re
+
+"""Traffic-aware routing with Mapbox and an OSRM fallback."""
+
+import math
 from datetime import datetime
 
 import httpx
 
 from ..config import get_settings
 from ..schemas import Place, RouteOption
-from ..timeutil import to_utc_rfc3339
+from ..timeutil import tz
 from .demo import demo_routes
 
-ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
-FIELD_MASK = "routes.duration,routes.staticDuration,routes.distanceMeters,routes.description"
+OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
+MAPBOX_URL = (
+    "https://api.mapbox.com/directions/v5/"
+    "mapbox/driving-traffic"
+)
 
 
 class RoutingError(Exception):
-    pass
+    """Raised when a routing request cannot be completed."""
 
 
-def _secs(value: str | None) -> int | None:
-    if not value:
-        return None
-    m = re.fullmatch(r"(\d+)(?:\.\d+)?s", value)
-    return int(m.group(1)) if m else None
+def _traffic_multiplier(departure: datetime) -> float:
+    """Estimate rush-hour effects; this is simulated, not live traffic."""
+    local = departure.astimezone(tz())
+    hour = local.hour + local.minute / 60
+
+    return (
+        1
+        + 0.9 * math.exp(-(((hour - 7.75) / 1.1) ** 2))
+        + 1.0 * math.exp(-(((hour - 17.5) / 1.4) ** 2))
+    )
 
 
-def _waypoint(p: Place) -> dict:
-    return {"location": {"latLng": {"latitude": p.lat, "longitude": p.lng}}}
+def _coordinates(origin: Place, dest: Place) -> str:
+    """Mapbox and OSRM both expect longitude,latitude coordinates."""
+    return (
+        f"{origin.lng},{origin.lat};"
+        f"{dest.lng},{dest.lat}"
+    )
 
 
-async def compute_routes(
-    client: httpx.AsyncClient, origin: Place, dest: Place, departure: datetime
+def _parse_routes(
+    data: dict,
+    provider: str,
 ) -> list[RouteOption]:
-    s = get_settings()
-    body = {
-        "origin": _waypoint(origin),
-        "destination": _waypoint(dest),
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "departureTime": to_utc_rfc3339(departure),
-        "computeAlternativeRoutes": True,
-        "units": "METRIC",
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": s.google_maps_api_key,
-        "X-Goog-FieldMask": FIELD_MASK,
-    }
-    try:
-        r = await client.post(ROUTES_URL, json=body, headers=headers)
-    except httpx.TimeoutException as e:
-        raise RoutingError("The routing provider timed out.") from e
-    except httpx.HTTPError as e:
-        raise RoutingError("The routing provider could not be reached.") from e
-    if r.status_code == 429:
-        raise RoutingError("The routing provider rate limit was reached. Try again shortly.")
-    if r.status_code in (401, 403):
-        raise RoutingError("The routing provider rejected the API key, or the Routes API is not enabled.")
-    if r.status_code >= 400:
-        raise RoutingError(f"The routing provider returned an error ({r.status_code}).")
-    try:
-        routes = r.json().get("routes", [])
-    except ValueError as e:
-        raise RoutingError("The routing provider returned an unreadable response.") from e
+    """Parse route estimates and skip malformed route entries."""
+    if data.get("code") != "Ok":
+        message = (
+            data.get("message")
+            or data.get("code")
+            or "Unknown error"
+        )
+        raise RoutingError(
+            f"{provider} could not find a route: {message}"
+        )
+
     options: list[RouteOption] = []
-    for item in routes:
-        duration = _secs(item.get("duration"))
-        if duration is None or "distanceMeters" not in item:
-            continue  # skip malformed entries rather than guessing
+
+    for index, route in enumerate(data.get("routes", []), start=1):
+        duration = route.get("duration")
+        distance = route.get("distance")
+
+        if duration is None or distance is None:
+            continue
+
+        typical_duration = route.get("duration_typical")
+
+        if provider == "Mapbox":
+            static_duration = (
+                max(1, round(typical_duration))
+                if typical_duration is not None
+                else None
+            )
+            description = f"Mapbox traffic-aware route {index}"
+        else:
+            static_duration = max(1, round(duration))
+            description = f"OSRM route {index}"
+
         options.append(
             RouteOption(
-                duration_s=duration,
-                static_duration_s=_secs(item.get("staticDuration")),
-                distance_m=item["distanceMeters"],
-                description=item.get("description"),
+                duration_s=max(1, round(duration)),
+                static_duration_s=static_duration,
+                distance_m=max(1, round(distance)),
+                description=description,
             )
         )
+
+    if not options:
+        raise RoutingError(
+            f"{provider} did not return any usable routes."
+        )
+
     return options
 
 
-async def sweep(
-    origin: Place, dest: Place, departures: list[datetime]
+async def _fetch_base_routes(
+    client: httpx.AsyncClient,
+    origin: Place,
+    dest: Place,
+) -> list[RouteOption]:
+    """Fetch ordinary OSRM routes without live traffic."""
+    try:
+        response = await client.get(
+            f"{OSRM_URL}/{_coordinates(origin, dest)}",
+            params={
+                "alternatives": "true",
+                "steps": "false",
+                "overview": "false",
+            },
+            headers={"User-Agent": "TrafficPredictionAgent/0.1"},
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.TimeoutException as exc:
+        raise RoutingError(
+            "OSRM routing request timed out."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RoutingError(
+            f"OSRM could not be reached ({type(exc).__name__})."
+        ) from exc
+    except ValueError as exc:
+        raise RoutingError("OSRM returned unreadable JSON.") from exc
+
+    return _parse_routes(data, "OSRM")
+
+
+async def _fetch_mapbox_routes(
+    client: httpx.AsyncClient,
+    origin: Place,
+    dest: Place,
+    departure: datetime,
+    token: str,
+) -> list[RouteOption]:
+    """Fetch traffic-aware Mapbox estimates for one departure time."""
+    try:
+        response = await client.get(
+            f"{MAPBOX_URL}/{_coordinates(origin, dest)}",
+            params={
+                "access_token": token,
+                "depart_at": departure.isoformat(timespec="seconds"),
+                "alternatives": "true",
+                "steps": "false",
+                "overview": "false",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.TimeoutException as exc:
+        raise RoutingError(
+            "Mapbox routing request timed out."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RoutingError(
+            f"Mapbox could not be reached ({type(exc).__name__})."
+        ) from exc
+    except ValueError as exc:
+        raise RoutingError("Mapbox returned unreadable JSON.") from exc
+
+    return _parse_routes(data, "Mapbox")
+
+
+async def _sweep_mapbox(
+    origin: Place,
+    dest: Place,
+    departures: list[datetime],
+    token: str,
+    timeout: float,
 ) -> dict[datetime, list[RouteOption]]:
-    """Fetch routes for every departure time. Returns only the slots that succeeded."""
-    s = get_settings()
-    if len(departures) > s.max_route_calls:
+    """Fetch estimates for every requested departure slot."""
+    results: dict[datetime, list[RouteOption]] = {}
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for departure in departures:
+            results[departure] = await _fetch_mapbox_routes(
+                client,
+                origin,
+                dest,
+                departure,
+                token,
+            )
+
+    return results
+
+
+async def _sweep_osrm(
+    origin: Place,
+    dest: Place,
+    departures: list[datetime],
+    timeout: float,
+) -> dict[datetime, list[RouteOption]]:
+    """Use OSRM and explicitly simulated rush-hour adjustments."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        base_routes = await _fetch_base_routes(
+            client,
+            origin,
+            dest,
+        )
+
+    results: dict[datetime, list[RouteOption]] = {}
+
+    for departure in departures:
+        multiplier = _traffic_multiplier(departure)
+        results[departure] = [
+            RouteOption(
+                duration_s=max(
+                    1,
+                    round(route.duration_s * multiplier),
+                ),
+                static_duration_s=route.static_duration_s,
+                distance_m=route.distance_m,
+                description=route.description,
+            )
+            for route in base_routes
+        ]
+
+    return results
+
+
+async def sweep(
+    origin: Place,
+    dest: Place,
+    departures: list[datetime],
+) -> dict[datetime, list[RouteOption]]:
+    """Prefer Mapbox for the complete sweep, then fall back to OSRM."""
+    settings = get_settings()
+
+    if len(departures) > settings.max_route_calls:
         raise RoutingError("Too many time slots requested.")
-    if s.demo_mode:
-        return {d: demo_routes(origin, dest, d) for d in departures}
-    if not s.google_maps_api_key:
-        raise RoutingError("GOOGLE_MAPS_API_KEY is not set.")
-    sem = asyncio.Semaphore(4)
-    async with httpx.AsyncClient(timeout=s.http_timeout_s) as client:
 
-        async def one(d: datetime) -> list[RouteOption]:
-            async with sem:
-                return await compute_routes(client, origin, dest, d)
+    if not departures:
+        return {}
 
-        outcomes = await asyncio.gather(*(one(d) for d in departures), return_exceptions=True)
-    ok: dict[datetime, list[RouteOption]] = {}
-    errors: list[Exception] = []
-    for d, out in zip(departures, outcomes):
-        if isinstance(out, Exception):
-            errors.append(out)
-        else:
-            ok[d] = out
-    if not ok and errors:
-        raise errors[0]
-    return ok
+    if settings.demo_mode:
+        return {
+            departure: demo_routes(origin, dest, departure)
+            for departure in departures
+        }
+
+    token = getattr(settings, "mapbox_access_token", "").strip()
+    mapbox_enabled = getattr(settings, "mapbox_enabled", True)
+
+    if mapbox_enabled and token:
+        try:
+            return await _sweep_mapbox(
+                origin,
+                dest,
+                departures,
+                token,
+                settings.http_timeout_s,
+            )
+        except RoutingError:
+            # Fall back for the entire sweep to avoid mixing providers.
+            pass
+
+    return await _sweep_osrm(
+        origin,
+        dest,
+        departures,
+        settings.http_timeout_s,
+    )

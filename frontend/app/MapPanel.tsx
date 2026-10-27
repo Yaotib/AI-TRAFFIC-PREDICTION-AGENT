@@ -1,176 +1,356 @@
-// ── MapPanel — Mapbox GL JS map with route polylines ──────────────────────
-import { createElement, useEffect, useRef, useCallback } from 'react';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as mapboxgl from 'mapbox-gl/esm';
 import { useRouteStore } from '../lib/store';
-import { LiveStatusBar } from '../components/LiveStatusBar';
 
-// Use the public token from env or a safe fallback placeholder
-mapboxgl.setAccessToken(import.meta.env.VITE_MAPBOX_TOKEN || '');
+
+
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as
+  | string
+  | undefined;
 
 const MAP_STYLE = 'mapbox://styles/mapbox/light-v11';
 
-const LABEL_OFFSETS: Record<string, [number, number]> = {
-  A: [0, -18],
-  B: [0,  18],
-  C: [30,   0],
+const ROUTE_IDS = ['recommended', 'A', 'B', 'C'] as const;
+
+type RouteLine = {
+  id: (typeof ROUTE_IDS)[number];
+  label: string;
+  coordinates: [number, number][];
+  color: string;
+  durationMin: number;
 };
 
-export function MapPanel() {
-  const USE_MOCK = true;
-  if (USE_MOCK) {
-    return (
-      <>
-        {createElement(
-          'div',
-          { className: 'flex items-center justify-center w-full h-full bg-gray-200' },
-          createElement('span', { className: 'text-lg font-medium text-gray-700' }, 'Mock Map Placeholder'),
-        )}
-        {/* You can still render LiveStatusBar if needed */}
-        <LiveStatusBar />
-      </>
-    );
-  }
+type LayerHandlers = {
+  click: (event: mapboxgl.MapMouseEvent) => void;
+  enter: () => void;
+  leave: () => void;
+};
 
+type RouteFeature = {
+  type: 'Feature';
+  properties: {
+    routeId: (typeof ROUTE_IDS)[number];
+    label: string;
+    durationMin: number;
+  };
+  geometry: {
+    type: 'LineString';
+    coordinates: [number, number][];
+  };
+};
+
+mapboxgl.setAccessToken(MAPBOX_TOKEN || '');
+
+export function MapPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const popupsRef = useRef<mapboxgl.Popup[]>([]);
-  const routeOptions = useRouteStore((s) => s.routeOptions);
-  const selectedId = useRouteStore((s) => s.selectedRouteId);
-  const setSelected = useRouteStore((s) => s.setSelectedRoute);
+  const layerHandlersRef = useRef<Map<string, LayerHandlers>>(new Map());
 
-  // ── Initialize map ──────────────────────────────────────────────────
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
 
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: MAP_STYLE,
-      center: [-0.1880, 5.5990],
-      zoom: 11.5,
-      attributionControl: false,
-      logoPosition: 'bottom-left',
-    });
+  const routeOptions = useRouteStore((state) => state.routeOptions);
+  const selectedId = useRouteStore((state) => state.selectedRouteId);
+  const setSelected = useRouteStore((state) => state.setSelectedRoute);
+  const planningResult = useRouteStore((state) => state.planningResult);
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+  const hasApiGeometry =
+    Array.isArray(planningResult?.recommended?.coordinates) &&
+    planningResult.recommended.coordinates.length >= 2;
 
-    map.on('load', () => {
-      mapRef.current = map;
-      renderRoutes(map);
-    });
-
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Render / update routes ──────────────────────────────────────────
   const renderRoutes = useCallback(
     (map: mapboxgl.Map) => {
       if (!map.isStyleLoaded()) return;
 
-      // Clear old markers and popups
-      markersRef.current.forEach((m) => m.remove());
-      popupsRef.current.forEach((p) => p.remove());
-      markersRef.current = [];
-      popupsRef.current  = [];
-
-      // Draw in reverse so selected route paints on top
-      const ordered = [...routeOptions].sort((a, b) =>
-        a.id === selectedId ? 1 : b.id === selectedId ? -1 : 0,
-      );
-
-      ordered.forEach((route) => {
-        const sourceId = `route-${route.id}`;
-        const layerId  = `line-${route.id}`;
-
-        const geojson = {
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'LineString', coordinates: route.coordinates },
-        };
-
-        if (map.getSource(sourceId)) {
-          (map.getSource(sourceId) as mapboxgl.GeoJSONSource).setData(geojson);
-        } else {
-          map.addSource(sourceId, { type: 'geojson', data: geojson });
+      // Remove old event handlers before removing their layers.
+      layerHandlersRef.current.forEach((handlers, layerId) => {
+        if (map.getLayer(layerId)) {
+          map.off('click', layerId, handlers.click);
+          map.off('mouseenter', layerId, handlers.enter);
+          map.off('mouseleave', layerId, handlers.leave);
         }
+      });
+      layerHandlersRef.current.clear();
 
-        const isSelected = route.id === selectedId;
+      // Remove existing markers and labels.
+      markersRef.current.forEach((marker) => marker.remove());
+      popupsRef.current.forEach((popup) => popup.remove());
+      markersRef.current = [];
+      popupsRef.current = [];
 
-        // Ensure old layer and source are removed to prevent duplicates and memory leaks
+      // Remove old layers before removing their sources.
+      ROUTE_IDS.forEach((id) => {
+        const layerId = `line-${id}`;
+        const sourceId = `route-${id}`;
+
         if (map.getLayer(layerId)) {
           map.removeLayer(layerId);
         }
+
         if (map.getSource(sourceId)) {
           map.removeSource(sourceId);
         }
-        // Add fresh source and layer
-        map.addSource(sourceId, { type: 'geojson', data: geojson });
+      });
+
+      let routes: RouteLine[] = [];
+
+      if (planningResult) {
+        // Once a plan exists, show its recommended route only.
+        // Never silently substitute a mock route for a failed API geometry.
+        const recommended = planningResult.recommended;
+        const coordinates = recommended?.coordinates;
+
+        if (
+          recommended &&
+          Array.isArray(coordinates) &&
+          coordinates.length >= 2
+        ) {
+          routes = [
+            {
+              id: 'recommended',
+              label: 'Recommended',
+              coordinates,
+              color: '#16a34a',
+              durationMin: Math.round(recommended.duration_min),
+            },
+          ];
+        }
+      } else {
+        // Before the first plan, retain the existing mock-route preview.
+        routes = routeOptions
+          .filter((route) => route.coordinates.length >= 2)
+          .map((route) => ({
+            id: route.id,
+            label: route.id,
+            coordinates: route.coordinates,
+            color: route.color,
+            durationMin: route.durationMin,
+          }));
+      }
+
+      const allCoordinates: [number, number][] = [];
+
+      routes.forEach((route) => {
+        const sourceId = `route-${route.id}`;
+        const layerId = `line-${route.id}`;
+        const isSelected =
+          route.id === 'recommended' || route.id === selectedId;
+
+        const feature: RouteFeature = {
+          type: 'Feature',
+          properties: {
+            routeId: route.id,
+            label: route.label,
+            durationMin: route.durationMin,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: route.coordinates,
+          },
+        };
+
+        map.addSource(sourceId, {
+          type: 'geojson',
+          data: feature,
+        });
+
         map.addLayer({
           id: layerId,
           type: 'line',
           source: sourceId,
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round',
+          },
           paint: {
             'line-color': route.color,
             'line-width': isSelected ? 7 : 4,
             'line-opacity': isSelected ? 1 : 0.55,
           },
         });
-        // Attach interaction listeners
-        map.on('click', layerId, () => setSelected(route.id));
-        map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
-        map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
 
-        // Route label popup (mid-point)
-        const mid = route.coordinates[Math.floor(route.coordinates.length / 2)];
+        // Preserve route selection for the mock preview.
+        // The API plan itself has one recommended route.
+        const mockRouteId = route.id;
+        if (mockRouteId === 'A' || mockRouteId === 'B' || mockRouteId === 'C') {
+          const handlers: LayerHandlers = {
+            click: () => setSelected(mockRouteId),
+            enter: () => {
+              map.getCanvas().style.cursor = 'pointer';
+            },
+            leave: () => {
+              map.getCanvas().style.cursor = '';
+            },
+          };
+
+          map.on('click', layerId, handlers.click);
+          map.on('mouseenter', layerId, handlers.enter);
+          map.on('mouseleave', layerId, handlers.leave);
+
+          layerHandlersRef.current.set(layerId, handlers);
+        }
+
+        allCoordinates.push(...route.coordinates);
+
+        const middleIndex = Math.floor(route.coordinates.length / 2);
+        const middleCoordinate = route.coordinates[middleIndex];
+
         const popup = new mapboxgl.Popup({
           closeButton: false,
           closeOnClick: false,
           anchor: 'center',
-          offset: LABEL_OFFSETS[route.id] ?? [0, 0],
+          offset: [0, -12],
           className: 'route-label-popup',
         })
-          .setLngLat(mid)
+          .setLngLat(middleCoordinate)
           .setHTML(
-            `<div class="route-label ${isSelected ? 'selected' : ''}">${route.id} · ${route.durationMin} min</div>`,
+            `<div class="route-label ${isSelected ? 'selected' : ''}">${route.label} · ${route.durationMin} min</div>`,
           )
           .addTo(map);
+
         popupsRef.current.push(popup);
       });
 
-      // Origin marker
-      const originCoord = routeOptions[0]?.coordinates[0];
-      const destCoord   = routeOptions[0]?.coordinates.at(-1);
+      // Mark the start and end of the displayed route.
+      const firstRoute = routes.find(
+        (route) => route.coordinates.length >= 2,
+      );
 
-      if (originCoord) {
-        const el = document.createElement('div');
-        el.className = 'origin-marker';
-        el.innerHTML = `<div class="origin-dot"></div>`;
-        markersRef.current.push(new mapboxgl.Marker(el).setLngLat(originCoord).addTo(map));
+      if (firstRoute) {
+        const originCoordinate = firstRoute.coordinates[0];
+        const destinationCoordinate =
+          firstRoute.coordinates[firstRoute.coordinates.length - 1];
+
+        const originElement = document.createElement('div');
+        originElement.className = 'origin-marker';
+        originElement.innerHTML = '<div class="origin-dot"></div>';
+
+        markersRef.current.push(
+          new mapboxgl.Marker(originElement)
+            .setLngLat(originCoordinate)
+            .addTo(map),
+        );
+
+        const destinationElement = document.createElement('div');
+        destinationElement.className = 'dest-marker';
+        destinationElement.innerHTML =
+          '<div class="dest-dot"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7L5.5 10.5L12 3.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>';
+
+        markersRef.current.push(
+          new mapboxgl.Marker(destinationElement)
+            .setLngLat(destinationCoordinate)
+            .addTo(map),
+        );
       }
-      if (destCoord) {
-        const el = document.createElement('div');
-        el.className = 'dest-marker';
-        el.innerHTML = `<div class="dest-dot"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7L5.5 10.5L12 3.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
-        markersRef.current.push(new mapboxgl.Marker(el).setLngLat(destCoord).addTo(map));
+
+      // Zoom to the displayed route.
+      if (allCoordinates.length > 0) {
+        const bounds = new mapboxgl.LngLatBounds();
+
+        allCoordinates.forEach((coordinate) => {
+          bounds.extend(coordinate);
+        });
+
+        map.fitBounds(bounds, {
+          padding: 70,
+          maxZoom: 14,
+          duration: 700,
+        });
       }
     },
-    [routeOptions, selectedId, setSelected],
+    [planningResult, routeOptions, selectedId, setSelected],
   );
 
+  // Initialize Mapbox once and clean up on unmount.
+  useEffect(() => {
+    if (!MAPBOX_TOKEN) {
+      setMapError('Mapbox token is missing.');
+      return;
+    }
+
+    if (!containerRef.current || mapRef.current) return;
+
+    let map: mapboxgl.Map;
+
+    try {
+      map = new mapboxgl.Map({
+        container: containerRef.current,
+        style: MAP_STYLE,
+        center: [-0.188, 5.599],
+        zoom: 11.5,
+        attributionControl: true,
+        logoPosition: 'bottom-left',
+      });
+    } catch {
+      setMapError('The map could not be initialized.');
+      return;
+    }
+
+    mapRef.current = map;
+
+    map.addControl(
+      new mapboxgl.NavigationControl({ showCompass: false }),
+      'top-right',
+    );
+
+    const handleLoad = () => {
+      setMapError(null);
+      setMapLoaded(true);
+    };
+
+    const handleError = (event: mapboxgl.ErrorEvent) => {
+      console.error('Mapbox error:', event.error);
+
+      // Don't replace a working map because an individual tile failed.
+      if (!map.isStyleLoaded()) {
+        setMapError(
+          'Map tiles could not be loaded. Check your Mapbox token and network connection.',
+        );
+      }
+    };
+
+    map.on('load', handleLoad);
+    map.on('error', handleError);
+
+    return () => {
+      map.off('load', handleLoad);
+      map.off('error', handleError);
+
+      layerHandlersRef.current.forEach((handlers, layerId) => {
+        if (map.getLayer(layerId)) {
+          map.off('click', layerId, handlers.click);
+          map.off('mouseenter', layerId, handlers.enter);
+          map.off('mouseleave', layerId, handlers.leave);
+        }
+      });
+
+      layerHandlersRef.current.clear();
+
+      markersRef.current.forEach((marker) => marker.remove());
+      popupsRef.current.forEach((popup) => popup.remove());
+      markersRef.current = [];
+      popupsRef.current = [];
+
+      map.remove();
+      mapRef.current = null;
+      setMapLoaded(false);
+    };
+  }, []);
+
+  // Update the route whenever the plan or selected mock route changes.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+
+    if (!map || !mapLoaded || !map.isStyleLoaded()) return;
+
     renderRoutes(map);
-  }, [renderRoutes]);
+  }, [mapLoaded, renderRoutes]);
 
   return (
     <>
-      {/* Inline styles for Mapbox custom elements (can't use Tailwind for these) */}
       <style>{`
         .route-label-popup .mapboxgl-popup-content {
           padding: 0;
@@ -178,7 +358,11 @@ export function MapPanel() {
           box-shadow: none;
           border-radius: 0;
         }
-        .route-label-popup .mapboxgl-popup-tip { display: none; }
+
+        .route-label-popup .mapboxgl-popup-tip {
+          display: none;
+        }
+
         .route-label {
           background: white;
           border: 1.5px solid #e5e7eb;
@@ -189,44 +373,72 @@ export function MapPanel() {
           color: #374151;
           font-family: Inter, sans-serif;
           white-space: nowrap;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
         }
+
         .route-label.selected {
           background: #111827;
           border-color: #111827;
           color: white;
         }
-        .origin-marker { cursor: default; }
+
+        .origin-marker {
+          cursor: default;
+        }
+
         .origin-dot {
-          width: 28px; height: 28px;
+          width: 28px;
+          height: 28px;
           background: white;
           border: 3px solid #111827;
           border-radius: 50%;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
+
         .origin-dot::after {
           content: '';
-          width: 8px; height: 8px;
+          width: 8px;
+          height: 8px;
           background: #111827;
           border-radius: 50%;
         }
+
         .dest-dot {
-          width: 32px; height: 32px;
+          width: 32px;
+          height: 32px;
           background: #111827;
           border-radius: 8px;
-          display: flex; align-items: center; justify-content: center;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
-        .dest-marker { cursor: default; }
+
+        .dest-marker {
+          cursor: default;
+        }
       `}</style>
 
-      {/* Map notice */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 backdrop-blur-sm rounded-full px-4 py-1.5 text-xs text-gray-500 font-medium shadow-sm border border-gray-100 whitespace-nowrap pointer-events-none">
-        Illustrative map, not to scale · simulated data
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 backdrop-blur-sm rounded-full px-4 py-1.5 text-xs text-gray-600 font-medium shadow-sm border border-gray-100 whitespace-nowrap pointer-events-none">
+        {mapError
+          ? mapError
+          : hasApiGeometry
+            ? 'Recommended route · backend geometry'
+            : planningResult
+              ? 'Route geometry unavailable for this plan'
+              : 'Preview route · mock data'}
       </div>
 
-      <div ref={containerRef} className="w-full h-full" />
+      {!MAPBOX_TOKEN || mapError ? (
+        <div className="flex h-full w-full items-center justify-center bg-gray-100 px-6 text-center text-sm text-gray-600">
+          {mapError || 'Add VITE_MAPBOX_TOKEN to frontend/.env.local to enable the map.'}
+        </div>
+      ) : (
+        <div ref={containerRef} className="h-full w-full" />
+      )}
     </>
   );
 }

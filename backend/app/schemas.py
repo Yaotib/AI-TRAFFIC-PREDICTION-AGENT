@@ -22,6 +22,7 @@ class RouteOption(BaseModel):
     static_duration_s: int | None = None
     distance_m: int
     description: str | None = None
+    coordinates: list[tuple[float, float]] | None = None
 
 
 class Candidate(BaseModel):
@@ -32,6 +33,7 @@ class Candidate(BaseModel):
     distance_km: float
     route_description: str | None = None
     alternatives_count: int = 1
+    coordinates: list[tuple[float, float]] | None = None
 
 
 class CandidateView(BaseModel):
@@ -43,6 +45,7 @@ class CandidateView(BaseModel):
     distance_km: float
     route_description: str | None
     alternatives_count: int
+    coordinates: list[tuple[float, float]] | None = None
 
 
 class DataLabels(BaseModel):

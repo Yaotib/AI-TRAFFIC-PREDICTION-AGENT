@@ -57,6 +57,9 @@ function statusLabel(result: DecisionResult): string {
 export function JourneyPlanner() {
   const origin = useRouteStore((state) => state.origin);
   const destination = useRouteStore((state) => state.destination);
+  const setPlanningResult = useRouteStore(
+    (state) => state.setPlanningResult,
+);
 
   const [mode, setMode] = useState<PlanRequest["mode"]>("arrive_by");
   const [timeLocal, setTimeLocal] = useState(defaultLocalDateTime);
@@ -83,6 +86,7 @@ export function JourneyPlanner() {
     setLoading(true);
     setError("");
     setResult(null);
+    setPlanningResult(null);
 
     try {
       const response = await plan({
@@ -93,6 +97,7 @@ export function JourneyPlanner() {
       });
 
       setResult(response);
+      setPlanningResult(response);
     } catch (err) {
       setError(
         err instanceof Error

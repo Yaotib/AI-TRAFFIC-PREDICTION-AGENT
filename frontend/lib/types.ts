@@ -79,6 +79,7 @@ export type CandidateView = {
   distance_km: number;
   route_description: string | null;
   alternatives_count: number;
+  coordinates: [number, number][] | null;
 };
 
 export type DataLabels = {

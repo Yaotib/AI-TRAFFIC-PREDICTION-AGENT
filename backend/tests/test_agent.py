@@ -125,3 +125,61 @@ async def test_unknown_place_returns_error_and_no_crash(monkeypatch):
     resp = await run_agent(user("Atlantis to Osu by 9"), client=llm)
     assert resp.result is None
     assert resp.trace[0].summary == "no match"
+
+class LazyFakeLLM(FakeLLM):
+    """Like FakeLLM, but a reply can be a function that reads the conversation so far."""
+
+    async def _create(self, **kwargs):
+        item = self.replies.pop(0)
+        if callable(item):
+            item = item(kwargs["messages"])
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def explain_from_tool(messages):
+    tool_msgs = [m for m in messages if m["role"] == "tool"]
+    data = json.loads(tool_msgs[-1]["content"])
+    text = (
+        f"Leave at {data['recommended_departure']}. "
+        f"The trip takes {data['trip_minutes']} minutes. "
+        "This is simulated demo data, and the times are provider estimates."
+    )
+    return reply(content=text)
+
+
+async def test_full_journey_uses_llm_explanation(monkeypatch):
+    use_demo(monkeypatch)
+    llm = LazyFakeLLM(
+        [
+            reply(
+                calls=[
+                    tc("c1", "geocode_place", {"query": "Madina"}),
+                    tc("c2", "geocode_place", {"query": "Accra Central"}),
+                ]
+            ),
+            reply(
+                calls=[
+                    tc(
+                        "c3",
+                        "compare_departure_times",
+                        {
+                            "origin_id": "p1",
+                            "destination_id": "p2",
+                            "mode": "arrive_by",
+                            "time_local": tomorrow_at(9),
+                        },
+                    )
+                ]
+            ),
+            explain_from_tool,
+        ]
+    )
+    resp = await run_agent(user("Madina to Accra Central by 9 tomorrow"), client=llm)
+    assert resp.result is not None
+    assert resp.result.recommended is not None
+    assert resp.explanation_source == "llm"
+    assert resp.notice is None
+    assert [t.tool for t in resp.trace] == ["geocode_place", "geocode_place", "compare_departure_times"]
+    assert all(t.ok for t in resp.trace)

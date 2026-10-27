@@ -157,6 +157,8 @@ async def run_tool(name: str, raw_args: str, ctx: ToolContext) -> dict:
         payload, summary, ok = {"error": "Invalid tool arguments."}, "invalid arguments", False
     except (PlanError, RoutingError, GeocodingError) as e:
         payload, summary, ok = {"error": str(e)}, "error", False
+    except Exception:
+        payload, summary, ok = {"error": "The tool failed. Tell the user you could not get this data."}, "unexpected error", False
     ctx.trace.append(
         ToolTrace(
             tool=name,

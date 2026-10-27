@@ -63,6 +63,7 @@ def health():
         "demo_mode": s.demo_mode,
         "google_configured": bool(s.google_maps_api_key),
         "llm_configured": bool(s.groq_api_key),
+                "mapbox_configured": bool(s.mapbox_access_token) and s.mapbox_enabled,
         "llm_model": s.llm_model,
     }
 

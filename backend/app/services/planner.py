@@ -2,7 +2,7 @@
 # backend/app/services/planner.py
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..config import get_settings
 from ..engine.decision import build_candidate, decide, departure_slots
@@ -14,6 +14,7 @@ from ..timeutil import fmt_time, now_local, parse_local
 from .traffic_store import record_prediction
 
 log = logging.getLogger(__name__)
+MIN_PREFERRED_LEAD_MIN = 10  # chosen by us; the guide gives no number
 
 
 class PlanError(Exception):
@@ -126,11 +127,20 @@ async def plan_between(
 ) -> DecisionResult:
     """Plan a journey, evaluate departure options, and save its prediction."""
     settings = get_settings()
+    now = now_local()
+
+    if target <= now:
+        raise PlanError("That time has already passed. Choose a later time.")
+    if mode == "depart_around" and target - now < timedelta(minutes=MIN_PREFERRED_LEAD_MIN):
+        raise PlanError(
+            f"That departure time is too close. Choose a time at least "
+            f"{MIN_PREFERRED_LEAD_MIN} minutes from now."
+        )
 
     slots = departure_slots(
         mode,
         target,
-        now_local(),
+        now,
         settings.sweep_step_min,
         settings.sweep_window_min,
     )

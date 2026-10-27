@@ -1,16 +1,22 @@
 import { useId, useMemo, useRef, useState } from 'react';
-import { buildOptions } from './data.js';
+import { buildOptions, PLACES } from './data.js';
 import { useRecents } from './useRecents.js';
 
 const LOC_FAIL_MSG = "We couldn't find your location. Enter a starting point instead.";
 
+const EXAMPLE_QUESTIONS = [
+  'What is the best time to travel between my origin and destination?',
+  'If I need to arrive by 8:30 AM, when should I leave?',
+];
+
 /**
- * Home screen: "Where to?" + start point + suggestions.
+ * Home screen: "Where to?" + start point + suggestions + chatbot.
  * Props:
  *   onSearch({ from, destination })  called when the user picks a destination
+ *   onAskChatbot({ question, from, destination }) called when user clicks/asks a question
  *   locationMode                     'demo' (works) or 'fail' (simulates location unavailable)
  */
-export default function HomeScreen({ onSearch, locationMode = 'demo' }) {
+export default function HomeScreen({ onSearch, onAskChatbot, onSwitchToChat, locationMode = 'demo' }) {
   const listId = useId();
   const destRef = useRef(null);
   const fromRef = useRef(null);
@@ -19,6 +25,7 @@ export default function HomeScreen({ onSearch, locationMode = 'demo' }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(-1);
   const [destError, setDestError] = useState('');
+  const [chatQuery, setChatQuery] = useState('');
 
   // Start point: 'loc' = demo current location, 'text' = typed by the user, 'none' = location unavailable
   const failed = locationMode === 'fail';
@@ -67,6 +74,21 @@ export default function HomeScreen({ onSearch, locationMode = 'demo' }) {
     onSearch({ from: from.mode === 'loc' ? 'Your current location' : from.text, destination: place });
   }
 
+  function handleAsk(question) {
+    if (from.mode === 'none') {
+      openEditor('Please set a starting point first.');
+      return;
+    }
+    const dest = options.find((o) => o.place)?.place || PLACES[0];
+    if (onAskChatbot) {
+      onAskChatbot({
+        question,
+        from: from.mode === 'loc' ? 'Your current location' : from.text,
+        destination: dest,
+      });
+    }
+  }
+
   function onKeyDown(e) {
     const n = options.length;
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((active + 1) % n); }
@@ -86,6 +108,17 @@ export default function HomeScreen({ onSearch, locationMode = 'demo' }) {
         <Logo />
         <b>Wayline</b>
         <span className="badge">Prototype · simulated data</span>
+        {onSwitchToChat && (
+          <button
+            type="button"
+            className="btn small manual-plan-btn"
+            style={{ marginLeft: 'auto' }}
+            onClick={onSwitchToChat}
+            aria-label="Switch to AI Chatbot"
+          >
+            💬 Chat Assistant
+          </button>
+        )}
       </div>
 
       <div>
@@ -155,6 +188,46 @@ export default function HomeScreen({ onSearch, locationMode = 'demo' }) {
             </li>
           ))}
         </ul>
+      </div>
+
+      {/* Chatbot section */}
+      <div className="home-chat-section">
+        <span className="cap">Try an example question</span>
+        <div className="example-questions-list">
+          {EXAMPLE_QUESTIONS.map((q, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className="example-question-btn"
+              onClick={() => handleAsk(q)}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+
+        <form
+          className="chat-input-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (chatQuery.trim()) {
+              handleAsk(chatQuery.trim());
+              setChatQuery('');
+            }
+          }}
+        >
+          <input
+            type="text"
+            className="chat-input-field"
+            placeholder="Ask about your trip..."
+            value={chatQuery}
+            onChange={(e) => setChatQuery(e.target.value)}
+            aria-label="Ask about your trip"
+          />
+          <button type="submit" className="chat-send-btn">
+            Send
+          </button>
+        </form>
       </div>
 
       <p className="note">Sample data only. No GPS, live traffic or map service is connected.</p>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MapView from './MapView.jsx';
-import { SLOTS, FIRST_SLOT, LEVEL_STYLE, buildReason, buildWarnings, computeModel, f12, toTimeValue } from './routing.js';
+import { FIRST_SLOT, LEVEL_STYLE, buildReason, buildWarnings, computeModel, f12, toTimeValue } from './routing.js';
 
 // Watches an element's size so the map can fit itself to the screen.
 function useSize(ref) {
@@ -97,14 +97,14 @@ export default function RouteScreen({ search, onBack, failFirst = false }) {
           {status === 'error' && (
             <div role="alert" className="stack">
               <div className="notice"><span className="ico warn" aria-hidden="true"><WarnIcon /></span>
-                <div><b>We couldn't load route options right now.</b><p>Please try again in a moment.</p></div></div>
+                <div><b>We couldn&apos;t load route options right now.</b><p>Please try again in a moment.</p></div></div>
               <div className="row"><button type="button" className="btn primary" onClick={load}>Try again</button><button type="button" className="btn" onClick={onBack}>Back to search</button></div>
             </div>
           )}
 
           {noData && (
             <div role="status" className="stack">
-              <div><b className="h">Not enough data for this trip</b><p>We don't have enough sample data for {destination.name}, so we can't recommend a route.</p></div>
+              <div><b className="h">Not enough data for this trip</b><p>We don&apos;t have enough sample data for {destination.name}, so we can&apos;t recommend a route.</p></div>
               <div className="row"><button type="button" className="btn primary" onClick={onBack}>Choose another destination</button></div>
             </div>
           )}

@@ -10,16 +10,29 @@ const FAIL_FIRST = /[?&]routefail/.test(window.location.search);
  * Route screen: map + bottom sheet + details.
  * Props: search = { from, destination }, onBack = go back to the home screen.
  */
-export default function MapScreen({ search, onBack }) {
+export default function MapScreen({
+  search,
+  onBack,
+  onOpenChat,
+  plan: externalPlan,
+  setPlan: externalSetPlan,
+  pick: externalPick,
+  setPick: externalSetPick,
+}) {
   const [ref, { W, H }] = useSize();
   const place = search.destination;
 
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const failNext = useRef(FAIL_FIRST);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [pick, setPick] = useState(null);
+  const [localPick, setLocalPick] = useState(null);
   const [toast, setToast] = useState('');
-  const [plan, setPlan] = useState({ mode: 'leave', leaveTime: '07:15', arriveTime: '08:30', date: new Date().toISOString().slice(0, 10) });
+  const [localPlan, setLocalPlan] = useState({ mode: 'leave', leaveTime: '07:15', arriveTime: '08:30', date: new Date().toISOString().slice(0, 10) });
+
+  const plan = externalPlan || localPlan;
+  const setPlan = externalSetPlan || setLocalPlan;
+  const pick = externalPick !== undefined ? externalPick : localPick;
+  const setPick = externalSetPick || setLocalPick;
 
   // brief loading state, then the (simulated) result
   function load() {
@@ -84,14 +97,14 @@ export default function MapScreen({ search, onBack }) {
           {status === 'error' && (
             <div role="alert" className="stack">
               <div className="msg"><span className="ico warn" aria-hidden="true"><Icon d="M12 3l10 18H2zM12 10v5M12 18v.2" size={20} color="#6B4B00" sw={2} /></span>
-                <div><b className="big">We couldn't load route options right now.</b><p>Please try again in a moment.</p></div></div>
+                <div><b className="big">We couldn&apos;t load route options right now.</b><p>Please try again in a moment.</p></div></div>
               <div className="row"><button type="button" className="btn primary" onClick={load}>Try again</button><button type="button" className="btn" onClick={onBack}>Back to search</button></div>
             </div>
           )}
 
           {noData && (
             <div role="status" className="stack">
-              <div><b className="big">Not enough data for this trip</b><p>We don't have enough sample data for {place.name}, so we can't recommend a route.</p></div>
+              <div><b className="big">Not enough data for this trip</b><p>We don&apos;t have enough sample data for {place.name}, so we can&apos;t recommend a route.</p></div>
               <div className="row"><button type="button" className="btn primary" onClick={onBack}>Choose another destination</button></div>
             </div>
           )}
@@ -103,19 +116,27 @@ export default function MapScreen({ search, onBack }) {
             </div>
           )}
 
-          {ready && !detailsOpen && <Summary m={m} sel={sel} recR={recR} selId={selId} onPick={setPick} onDetails={() => setSheetOpen(true)} />}
+          {ready && !detailsOpen && (
+            <>
+              <Summary m={m} sel={sel} recR={recR} selId={selId} onPick={setPick} onDetails={() => setSheetOpen(true)} onOpenChat={onOpenChat} />
+              <div className="row">
+                <button type="button" className="btn primary" style={{width: '100%'}} onClick={() => console.log('Start navigation')}>Start Navigation</button>
+              </div>
+            </>
+          )}
 
           {detailsOpen && (
             <Details m={m} ready={ready} plan={plan} set={set} sel={sel} selId={selId} onPick={setPick} onClose={() => setSheetOpen(false)} />
           )}
         </div>
       </section>
+
     </div>
   );
 }
 
 /* ---------- collapsed sheet: the simple summary ---------- */
-function Summary({ m, sel, recR, selId, onPick, onDetails }) {
+function Summary({ m, sel, recR, selId, onPick, onDetails, onOpenChat }) {
   const isRec = sel.id === m.rec;
   const diff = sel.min - recR.min;
   const L = LEVEL_STYLE[sel.lvl];
@@ -131,7 +152,9 @@ function Summary({ m, sel, recR, selId, onPick, onDetails }) {
           <span className="eta">Leave {f12(m.dep)} · arrive {f12(sel.eta)}</span>
           <span className="sub">Route {sel.id} · {sel.name} · {sel.km} km</span>
         </div>
-        <button type="button" className="btn small" onClick={onDetails}>Details</button>
+        <div className="row tight">
+          <button type="button" className="btn small" onClick={onDetails}>Details</button>
+        </div>
       </div>
       <div className="grid3">
         {m.routes.map((r) => (

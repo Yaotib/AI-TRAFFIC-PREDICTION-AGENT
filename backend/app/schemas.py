@@ -10,7 +10,11 @@ class Place(BaseModel):
     name: str
     lat: float
     lng: float
-    source: Literal["google_geocoding", "demo_fixture"]
+    source: Literal[
+    "google_geocoding",
+    "openstreetmap_nominatim",
+    "demo_fixture",
+]
 
 
 class RouteOption(BaseModel):
@@ -69,6 +73,7 @@ class DecisionResult(BaseModel):
     warnings: list[str]
     labels: DataLabels
     context: dict | None = None
+    prediction_id: int | None = None
 
 
 class PlanRequest(BaseModel):
@@ -100,3 +105,29 @@ class AskResponse(BaseModel):
     notice: str | None
     result: DecisionResult | None
     trace: list[ToolTrace]
+
+
+class ActualTripRequest(BaseModel):
+    """Request to record an observed journey duration."""
+
+    prediction_id: int = Field(gt=0)
+    actual_duration_min: int = Field(gt=0)
+    observation_source: str = Field(min_length=1, max_length=100)
+
+
+class ActualTripResponse(BaseModel):
+    """Confirmation that an actual journey was recorded."""
+
+    id: int
+    prediction_id: int
+    actual_duration_min: int
+    observed_at: str
+    observation_source: str
+
+
+class EvaluationResponse(BaseModel):
+    """Prediction accuracy metrics based on observed journeys."""
+
+    matched_observations: int
+    mae_minutes: float | None
+    mean_signed_error_minutes: float | None

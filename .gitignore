@@ -26,3 +26,14 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+
+# Local SQLite databases and database sidecar files
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Python cache files
+__pycache__/
+*.py[cod]

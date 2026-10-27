@@ -1,4 +1,4 @@
-import { BASE, SLOT0, LEVEL_STYLE, f12, reasonText, toTimeValue } from './routes.js';
+import { SLOT0, LEVEL_STYLE, f12, reasonText, toTimeValue } from './routes.js';
 
 export default function DetailsPanel({
   m,

@@ -78,10 +78,6 @@ export function generateAiResponse(query, place, currentPlan, fromName = 'My loc
  * Chatbot component supporting both embedded and full panel modes.
  */
 export default function Chatbot({
-  place,
-  fromName = 'My location',
-  plan,
-  onPlanChange,
   messages = [],
   onSendMessage,
   isFullPane = false,

@@ -153,6 +153,11 @@ function Summary({ m, sel, recR, selId, onPick, onDetails, onOpenChat }) {
           <span className="sub">Route {sel.id} · {sel.name} · {sel.km} km</span>
         </div>
         <div className="row tight">
+          {onOpenChat && (
+            <button type="button" className="btn small" onClick={onOpenChat} style={{ color: 'var(--teal-dark)', borderColor: 'var(--teal)' }}>
+              Ask AI
+            </button>
+          )}
           <button type="button" className="btn small" onClick={onDetails}>Details</button>
         </div>
       </div>
